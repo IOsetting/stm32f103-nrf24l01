@@ -1,0 +1,14 @@
+# Compiled file
+*.o
+*.d
+*.crf
+
+# Log file
+*.log
+
+mdk-arm/
+user/config.h
+user/env.h
+
+# virtual machine crash logs
+hs_err_pid*
