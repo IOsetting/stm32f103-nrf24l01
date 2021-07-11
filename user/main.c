@@ -24,9 +24,9 @@ int main(void)
   printf("nRF24L01 initialized\r\n");
 
   while(NRF24L01_Check() != 0) {
-		printf("nRF24L01 check failed\r\n");
+    printf("nRF24L01 check failed\r\n");
     Systick_Delay_ms(2000);
-	}
+  }
   printf("nRF24L01 check succeeded\r\n");
 
   if(Mode == 1) {
