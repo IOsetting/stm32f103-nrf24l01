@@ -1,6 +1,7 @@
 #include <stdio.h>
 #include <string.h>
 #include "nrf24l01.h"
+#include "timer.h"
 
 u8 RX_BUF[NRF24L01_PLOAD_WIDTH];
 u8 TX_BUF[NRF24L01_PLOAD_WIDTH];
@@ -54,7 +55,7 @@ void NRF24L01_Init(void)
   GPIO_InitStruct.GPIO_Pin = NRF24L01_GPIO_CE | NRF24L01_GPIO_CSN;
   GPIO_InitStruct.GPIO_Mode = GPIO_Mode_Out_PP;
   GPIO_InitStruct.GPIO_Speed = GPIO_Speed_50MHz;
-  GPIO_Init(NRF24L01_GPIOx, &GPIO_InitStruct);  
+  GPIO_Init(NRF24L01_GPIOx, &GPIO_InitStruct);
   // IRQ Initialize
   GPIO_InitStruct.GPIO_Pin = NRF24L01_GPIO_IRQ;
   GPIO_InitStruct.GPIO_Mode = GPIO_Mode_IPU;
@@ -207,24 +208,24 @@ void NRF24L01_ClearIRQFlags(void) {
 /**
 * Common configurations of RX and TX, internal function
 */
-void _NRF24L01_Config(u8 *rx_addr, u8 *tx_addr)
+void _NRF24L01_Config(u8 *tx_addr)
 {
   // TX Address
   NRF24L01_Write_From_Buf(NRF24L01_CMD_REGISTER_W + NRF24L01_REG_TX_ADDR, tx_addr, NRF24L01_ADDR_WIDTH);
-  // RX Address of P0
-  NRF24L01_Write_From_Buf(NRF24L01_CMD_REGISTER_W + NRF24L01_REG_RX_ADDR_P0, rx_addr, NRF24L01_ADDR_WIDTH);
   // RX P0 Payload Width
   NRF24L01_Write_Reg(NRF24L01_CMD_REGISTER_W + NRF24L01_REG_RX_PW_P0, NRF24L01_PLOAD_WIDTH);
-  // 使能接收通道0自动应答
+  // Enable Auto ACK
   NRF24L01_Write_Reg(NRF24L01_CMD_REGISTER_W + NRF24L01_REG_EN_AA, 0x3f);
-  // 使能接收通道0
+  // Enable RX channels
   NRF24L01_Write_Reg(NRF24L01_CMD_REGISTER_W + NRF24L01_REG_EN_RXADDR, 0x3f);
-  // 选择射频通道40 - 2.440GHz
-  NRF24L01_Write_Reg(NRF24L01_CMD_REGISTER_W + NRF24L01_REG_RF_CH, 0);
-  // 07:1Mbps,0dBm, 0f:2Mbps,0dBm
-  NRF24L01_Write_Reg(NRF24L01_CMD_REGISTER_W + NRF24L01_REG_RF_SETUP, 0x0f);
+  // RF channel: 2.400G  + 0.001 * x
+  NRF24L01_Write_Reg(NRF24L01_CMD_REGISTER_W + NRF24L01_REG_RF_CH, 40);
+  // 000+0+[0:1Mbps,1:2Mbps]+[00:-18dbm,01:-12dbm,10:-6dbm,11:0dbm]+[0:LNA_OFF,1:LNA_ON]
+  // 01:1Mbps,-18dbm; 03:1Mbps,-12dbm; 05:1Mbps,-6dbm; 07:1Mbps,0dBm
+  // 09:2Mbps,-18dbm; 0b:2Mbps,-12dbm; 0d:2Mbps,-6dbm; 0f:2Mbps,0dBm, 
+  NRF24L01_Write_Reg(NRF24L01_CMD_REGISTER_W + NRF24L01_REG_RF_SETUP, 0x03);
   // 0A:delay=250us,count=10, 1A:delay=500us,count=10
-  NRF24L01_Write_Reg(NRF24L01_CMD_REGISTER_W + NRF24L01_REG_SETUP_RETR, 0x1a);
+  NRF24L01_Write_Reg(NRF24L01_CMD_REGISTER_W + NRF24L01_REG_SETUP_RETR, 0x0a);
 }
 
 /**
@@ -233,7 +234,9 @@ void _NRF24L01_Config(u8 *rx_addr, u8 *tx_addr)
 void NRF24L01_RX_Mode(u8 *rx_addr, u8 *tx_addr)
 {
   CE(0);
-  _NRF24L01_Config(rx_addr, tx_addr);
+  _NRF24L01_Config(tx_addr);
+  // RX Address of P0
+  NRF24L01_Write_From_Buf(NRF24L01_CMD_REGISTER_W + NRF24L01_REG_RX_ADDR_P0, rx_addr, NRF24L01_ADDR_WIDTH);
   /**
   REG 0x00: 
   0)PRIM_RX     0:TX             1:RX
@@ -255,7 +258,10 @@ void NRF24L01_RX_Mode(u8 *rx_addr, u8 *tx_addr)
 void NRF24L01_TX_Mode(u8 *rx_addr, u8 *tx_addr)
 {
   CE(0);
-  _NRF24L01_Config(rx_addr, tx_addr);
+  _NRF24L01_Config(tx_addr);
+  // On the PTX the **TX_ADDR** must be the same as the **RX_ADDR_P0** and as the pipe address for the designated pipe
+  // RX_ADDR_P0 will be used for receiving ACK
+  NRF24L01_Write_From_Buf(NRF24L01_CMD_REGISTER_W + NRF24L01_REG_RX_ADDR_P0, tx_addr, NRF24L01_ADDR_WIDTH);
   NRF24L01_Write_Reg(NRF24L01_CMD_REGISTER_W + NRF24L01_REG_CONFIG, 0x0e); //TX,PWR_UP,CRC16,EN_CRC
   CE(1);
 }
@@ -295,20 +301,23 @@ u8 NRF24L01_TxPacket(u8 *tx_buf, u8 len)
   CE(1);
   while(IRQ != 0); // Waiting send finish
 
+  CE(0);
   status = NRF24L01_Read_Reg(NRF24L01_REG_STATUS);
+  printf("Interrupted, status: %02X\r\n", status);
   if(status & NRF24L01_FLAG_TX_DSENT) {
-    printf("Send status: %2X\r\n", status);
     printf("Data sent: ");
     for (u8 i = 0; i < len; i++) {
       printf("%02X ", tx_buf[i]);
     }
     printf("\r\n");
     NRF24L01_ClearIRQFlag(NRF24L01_FLAG_TX_DSENT);
+
   } else if(status & NRF24L01_FLAG_MAX_RT) {
     printf("Sending exceeds max retries\r\n");
     NRF24L01_FlushTX();
     NRF24L01_ClearIRQFlag(NRF24L01_FLAG_MAX_RT);
   }
+  CE(1);
   return status;
 }
 
@@ -323,7 +332,7 @@ void NRF24L01_DumpConfig(void) {
 
 	// CONFIG
 	i = NRF24L01_Read_Reg(NRF24L01_REG_CONFIG);
-	printf("[0x%02X] 0x%02X MASK:%02x CRC:%02x PWR:%s MODE:P%s\r\n",
+	printf("[0x%02X] 0x%02X MASK:%02X CRC:%02X PWR:%s MODE:P%s\r\n",
 			NRF24L01_REG_CONFIG,
 			i,
 			i >> 4,

@@ -4,7 +4,7 @@
 #include "nrf24l01.h"
 
 u8 RX_ADDRESS[NRF24L01_ADDR_WIDTH] = {0x32,0x4E,0x6F,0x64,0x65};
-u8 TX_ADDRESS[NRF24L01_ADDR_WIDTH] = {0xAA,0xBB,0xCC,0xDD,0xEE};
+u8 TX_ADDRESS[NRF24L01_ADDR_WIDTH] = {0x11,0x22,0x33,0x44,0x55};
 
 /*-----------------------------------------------------*/
 /* Here control sending:1 or receiving:0 mode */
